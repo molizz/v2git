@@ -8,8 +8,8 @@ v2git 是 HTTP git服务器。
 
 ```yml
 port: 2000
-repo_base: /usr/moli/projects
-auth_url: http://127.0.0.1/api/auth
+repobase: /usr/moli/projects         // 仓库root目录
+authurl: http://127.0.0.1/api/auth   // 授权时请求的url
 ```
 
 ### 验证
@@ -35,6 +35,6 @@ auth_url: http://127.0.0.1/api/auth
 失败
 ```json
 {
-    "result": 1 # Authentication Failed
+    "result": 1  //Authentication Failed
 }
 ```
