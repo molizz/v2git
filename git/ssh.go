@@ -55,7 +55,7 @@ func (this *GitSSH) Handler(session ssh.Session) {
 	// URL.path转换成路径
 	logicPath, err := UrlToNamespace(commands[1])
 	if err != nil {
-		session.Write(utils.StringToBytes(err.Error() + "\n"))
+		log.Println("Path to namespace error ", err)
 		return
 	}
 	// 连接成绝对物理路径
