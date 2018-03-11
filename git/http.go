@@ -16,6 +16,7 @@ g.Start()
 package git
 
 import (
+	"compress/gzip"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -29,8 +30,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/molisoft/v2git/cfg"
 	"github.com/molisoft/v2git/utils"
-	"github.com/valyala/fasthttp"
 )
 
 type Service struct {
@@ -39,16 +40,9 @@ type Service struct {
 	Rpc     string
 }
 
-type Config struct {
-	ListenAddr  string
-	ProjectBase string
-	GitBinPath  string
-	UploadPack  bool
-	ReceivePack bool
-}
-
 type HandlerReq struct {
-	r    *fasthttp.RequestCtx
+	w    http.ResponseWriter
+	r    *http.Request
 	Rpc  string
 	Dir  string
 	File string
@@ -60,22 +54,12 @@ type GitHttp struct {
 	verify   Verification
 }
 
-type Verification func(string, string, string) bool
-
-var (
-	Realm = "V2Git"
-)
-
 // Request handling function
 
-func (this *GitHttp) requestHandler(r *fasthttp.RequestCtx) {
-	proto := ""
-	if r.Request.Header.IsHTTP11() {
-		proto = "HTTP 1.1"
-	}
-	log.Printf("%s %s %s %s", r.RemoteAddr(), r.Method(), r.URI().Path(), proto)
-	if !this.verification(r) {
-		this.renderUnauthorized(r)
+func (this *GitHttp) requestHandler(w http.ResponseWriter, r *http.Request) {
+	log.Printf("%s %s %s %s", r.RemoteAddr, r.Method, r.URL.Path, r.Proto)
+	if !this.verification(w, r) {
+		this.renderUnauthorized(w)
 		return
 	}
 
@@ -85,38 +69,38 @@ func (this *GitHttp) requestHandler(r *fasthttp.RequestCtx) {
 			log.Print(err)
 		}
 
-		if m := re.FindStringSubmatch(utils.BytesToString(r.URI().Path())); m != nil {
-			if service.Method != utils.BytesToString(r.Method()) {
-				this.renderMethodNotAllowed(r)
+		if m := re.FindStringSubmatch(r.URL.Path); m != nil {
+			if service.Method != r.Method {
+				this.renderMethodNotAllowed(w, r)
 				return
 			}
 
 			rpc := service.Rpc
-			file := strings.Replace(utils.BytesToString(r.Path()), m[1]+"/", "", 1)
+			file := strings.Replace(r.URL.Path, m[1]+"/", "", 1)
 			dir, err := this.getGitDir(m[1])
 			if err != nil {
 				log.Print(err)
-				this.renderNotFound(r)
+				this.renderNotFound(w)
 				return
 			}
 
-			hr := HandlerReq{r, rpc, dir, file}
+			hr := HandlerReq{w, r, rpc, dir, file}
 			service.Handler(hr)
 			return
 		}
 	}
-	this.renderNotFound(r)
+	this.renderNotFound(w)
 	return
 
 }
 
 // 验证账号密码
 
-func (this *GitHttp) verification(r *fasthttp.RequestCtx) bool {
+func (this *GitHttp) verification(w http.ResponseWriter, r *http.Request) bool {
 	if this.verify == nil {
 		return true
 	}
-	authField := utils.BytesToString(r.Request.Header.Peek("Authorization"))
+	authField := r.Header.Get("Authorization")
 	if len(authField) > 0 {
 		parts := strings.Split(authField, " ")
 		if len(parts) == 2 {
@@ -127,13 +111,21 @@ func (this *GitHttp) verification(r *fasthttp.RequestCtx) bool {
 					auths := strings.SplitN(authString, ":", 2)
 					username := auths[0]
 					password := auths[1]
-					request_path := utils.BytesToString(r.Path())
-					return this.verify(request_path, username, password)
+					gitPath := r.URL.Path
+
+					authRequest := &cfg.AuthRequest{
+						AuthURL:  this.config.AuthUrl,
+						Path:     gitPath,
+						Username: username,
+						Password: password,
+					}
+
+					return this.verify(authRequest)
 				}
 			}
 		}
 	}
-	r.Response.Header.Set("WWW-Authenticate", fmt.Sprintf("Basic realm=\"%s\"", Realm))
+	w.Header().Set("WWW-Authenticate", fmt.Sprintf("Basic realm=\"%s\"", Realm))
 	log.Println("Unauthorized!")
 	return false
 }
@@ -141,16 +133,16 @@ func (this *GitHttp) verification(r *fasthttp.RequestCtx) bool {
 // Actual command handling functions
 
 func (this *GitHttp) serviceRpc(hr HandlerReq) {
-	r, rpc, dir := hr.r, hr.Rpc, hr.Dir
+	w, r, rpc, dir := hr.w, hr.r, hr.Rpc, hr.Dir
 	access := this.hasAccess(r, dir, rpc, true)
 
 	if access == false {
-		this.renderNoAccess(r)
+		this.renderNoAccess(w)
 		return
 	}
 
-	r.SetContentType(fmt.Sprintf("application/x-git-%s-result", rpc))
-	r.SetStatusCode(http.StatusOK)
+	w.Header().Set("Content-Type", fmt.Sprintf("application/x-git-%s-result", rpc))
+	w.WriteHeader(http.StatusOK)
 
 	args := []string{rpc, "--stateless-rpc", dir}
 	cmd := exec.Command(this.config.GitBinPath, args...)
@@ -170,20 +162,22 @@ func (this *GitHttp) serviceRpc(hr HandlerReq) {
 		log.Print(err)
 	}
 
-	switch utils.BytesToString(r.Request.Header.Peek("Content-Encoding")) {
+	var reader io.ReadCloser
+	switch r.Header.Get("Content-Encoding") {
 	case "gzip":
-		body_bytes, _ := r.Request.BodyGunzip()
-		in.Write(body_bytes)
+		reader, _ = gzip.NewReader(r.Body)
+		defer reader.Close()
 	default:
-		r.Request.BodyWriteTo(in)
+		reader = r.Body
 	}
+	io.Copy(in, reader)
 	in.Close()
-	io.Copy(r, stdout)
+	io.Copy(w, stdout)
 	cmd.Wait()
 }
 
 func (this *GitHttp) getInfoRefs(hr HandlerReq) {
-	r, dir := hr.r, hr.Dir
+	w, r, dir := hr.w, hr.r, hr.Dir
 	service_name := this.getServiceType(r)
 	access := this.hasAccess(r, dir, service_name, false)
 
@@ -192,63 +186,63 @@ func (this *GitHttp) getInfoRefs(hr HandlerReq) {
 		fmt.Println(args)
 		refs := this.gitCommand(dir, args...)
 
-		this.hdrNocache(r)
-		r.Response.Header.Set("Content-Type", fmt.Sprintf("application/x-git-%s-advertisement", service_name))
-		r.SetStatusCode(http.StatusOK)
-		r.Write(this.packetWrite("# service=git-" + service_name + "\n"))
-		r.Write(this.packetFlush())
-		r.Write(refs)
+		this.hdrNocache(w)
+		w.Header().Set("Content-Type", fmt.Sprintf("application/x-git-%s-advertisement", service_name))
+		w.WriteHeader(http.StatusOK)
+		w.Write(this.packetWrite("# service=git-" + service_name + "\n"))
+		w.Write(this.packetFlush())
+		w.Write(refs)
 	} else {
 		this.updateServerInfo(dir)
-		this.hdrNocache(r)
+		this.hdrNocache(w)
 		this.sendFile("text/plain; charset=utf-8", hr)
 	}
 }
 
 func (this *GitHttp) getInfoPacks(hr HandlerReq) {
-	this.hdrCacheForever(hr.r)
+	this.hdrCacheForever(hr.w)
 	this.sendFile("text/plain; charset=utf-8", hr)
 }
 
 func (this *GitHttp) getLooseObject(hr HandlerReq) {
-	this.hdrCacheForever(hr.r)
+	this.hdrCacheForever(hr.w)
 	this.sendFile("application/x-git-loose-object", hr)
 }
 
 func (this *GitHttp) getPackFile(hr HandlerReq) {
-	this.hdrCacheForever(hr.r)
+	this.hdrCacheForever(hr.w)
 	this.sendFile("application/x-git-packed-objects", hr)
 }
 
 func (this *GitHttp) getIdxFile(hr HandlerReq) {
-	this.hdrCacheForever(hr.r)
+	this.hdrCacheForever(hr.w)
 	this.sendFile("application/x-git-packed-objects-toc", hr)
 }
 
 func (this *GitHttp) getTextFile(hr HandlerReq) {
-	this.hdrNocache(hr.r)
+	this.hdrNocache(hr.w)
 	this.sendFile("text/plain", hr)
 }
 
 // Logic helping functions
 
 func (this *GitHttp) sendFile(content_type string, hr HandlerReq) {
-	r := hr.r
+	w, r := hr.w, hr.r
 	req_file := path.Join(hr.Dir, hr.File)
 
 	f, err := os.Stat(req_file)
 	if os.IsNotExist(err) {
-		this.renderNotFound(r)
+		this.renderNotFound(w)
 		return
 	}
-	r.Response.Header.Set("Content-Type", content_type)
-	r.Response.Header.Set("Content-Length", fmt.Sprintf("%d", f.Size()))
-	r.Response.Header.Set("Last-Modified", f.ModTime().Format(http.TimeFormat))
-	fasthttp.ServeFile(r, req_file)
+	w.Header().Set("Content-Type", content_type)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", f.Size()))
+	w.Header().Set("Last-Modified", f.ModTime().Format(http.TimeFormat))
+	http.ServeFile(w, r, req_file)
 }
 
 func (this *GitHttp) getGitDir(uriPath string) (string, error) {
-	root := this.config.ProjectBase
+	root := this.config.RepoRoot
 
 	if root == "" {
 		cwd, err := os.Getwd()
@@ -258,7 +252,7 @@ func (this *GitHttp) getGitDir(uriPath string) (string, error) {
 		}
 		root = cwd
 	}
-	dir, err := UrlToDirPath(uriPath)
+	dir, err := UrlToNamespace(uriPath)
 	if err != nil {
 		return "", err
 	}
@@ -270,8 +264,8 @@ func (this *GitHttp) getGitDir(uriPath string) (string, error) {
 	return f, nil
 }
 
-func (this *GitHttp) getServiceType(r *fasthttp.RequestCtx) string {
-	service_type := utils.BytesToString(r.FormValue("service"))
+func (this *GitHttp) getServiceType(r *http.Request) string {
+	service_type := r.FormValue("service")
 
 	if s := strings.HasPrefix(service_type, "git-"); !s {
 		return ""
@@ -280,9 +274,9 @@ func (this *GitHttp) getServiceType(r *fasthttp.RequestCtx) string {
 	return strings.Replace(service_type, "git-", "", 1)
 }
 
-func (this *GitHttp) hasAccess(r *fasthttp.RequestCtx, dir string, rpc string, check_content_type bool) bool {
+func (this *GitHttp) hasAccess(r *http.Request, dir string, rpc string, check_content_type bool) bool {
 	if check_content_type {
-		if utils.BytesToString(r.Request.Header.ContentType()) != fmt.Sprintf("application/x-git-%s-request", rpc) {
+		if r.Header.Get("Content-Type") != fmt.Sprintf("application/x-git-%s-request", rpc) {
 			return false
 		}
 	}
@@ -336,29 +330,29 @@ func (this *GitHttp) gitCommand(dir string, args ...string) []byte {
 
 // HTTP error response handling functions
 
-func (this *GitHttp) renderMethodNotAllowed(r *fasthttp.RequestCtx) {
-	if r.Request.Header.IsHTTP11() {
-		r.SetStatusCode(http.StatusMethodNotAllowed)
-		r.Write([]byte("Method Not Allowed"))
+func (this *GitHttp) renderMethodNotAllowed(w http.ResponseWriter, r *http.Request) {
+	if r.Proto == "HTTP/1.1" {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		w.Write([]byte("Method Not Allowed"))
 	} else {
-		r.SetStatusCode(http.StatusBadRequest)
-		r.Write([]byte("Bad Request"))
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("Bad Request"))
 	}
 }
 
-func (this *GitHttp) renderNotFound(r *fasthttp.RequestCtx) {
-	r.SetStatusCode(http.StatusNotFound)
-	r.Write([]byte("Not Found"))
+func (this *GitHttp) renderNotFound(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusNotFound)
+	w.Write([]byte("Not Found"))
 }
 
-func (this *GitHttp) renderNoAccess(r *fasthttp.RequestCtx) {
-	r.SetStatusCode(http.StatusForbidden)
-	r.Write([]byte("Forbidden"))
+func (this *GitHttp) renderNoAccess(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusForbidden)
+	w.Write([]byte("Forbidden"))
 }
 
-func (this *GitHttp) renderUnauthorized(r *fasthttp.RequestCtx) {
-	r.SetStatusCode(http.StatusUnauthorized)
-	r.Write([]byte("Unauthorized"))
+func (this *GitHttp) renderUnauthorized(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusUnauthorized)
+	w.Write([]byte("Unauthorized"))
 }
 
 // Packet-line handling function
@@ -379,22 +373,23 @@ func (this *GitHttp) packetWrite(str string) []byte {
 
 // Header writing functions
 
-func (this *GitHttp) hdrNocache(w *fasthttp.RequestCtx) {
-	w.Response.Header.Set("Expires", "Fri, 01 Jan 1980 00:00:00 GMT")
-	w.Response.Header.Set("Pragma", "no-cache")
-	w.Response.Header.Set("Cache-Control", "no-cache, max-age=0, must-revalidate")
+func (this *GitHttp) hdrNocache(w http.ResponseWriter) {
+	w.Header().Set("Expires", "Fri, 01 Jan 1980 00:00:00 GMT")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Cache-Control", "no-cache, max-age=0, must-revalidate")
 }
 
-func (this *GitHttp) hdrCacheForever(w *fasthttp.RequestCtx) {
+func (this *GitHttp) hdrCacheForever(w http.ResponseWriter) {
 	now := time.Now().Unix()
 	expires := now + 31536000
-	w.Response.Header.Set("Date", fmt.Sprintf("%d", now))
-	w.Response.Header.Set("Expires", fmt.Sprintf("%d", expires))
-	w.Response.Header.Set("Cache-Control", "public, max-age=31536000")
+	w.Header().Set("Date", fmt.Sprintf("%d", now))
+	w.Header().Set("Expires", fmt.Sprintf("%d", expires))
+	w.Header().Set("Cache-Control", "public, max-age=31536000")
 }
 
 func (this *GitHttp) Start() {
-	err := fasthttp.ListenAndServe(this.config.ListenAddr, this.requestHandler)
+	http.HandleFunc("/", this.requestHandler)
+	err := http.ListenAndServe(this.config.ListenAddr, nil)
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}
@@ -404,18 +399,19 @@ func (this *GitHttp) RegisterVerify(v Verification) {
 	this.verify = v
 }
 
-func New(address string, projectBaseDir string) *GitHttp {
+func NewHTTP(address string, cfg *cfg.Config) *GitHttp {
 	githttp := &GitHttp{
 		config: &Config{
 			ListenAddr:  address,
-			ProjectBase: projectBaseDir,
-			GitBinPath:  "/usr/bin/git",
+			RepoRoot:    cfg.RepoDir,
+			GitBinPath:  cfg.GitBinPath,
+			AuthUrl:     cfg.AuthUrl,
 			UploadPack:  true,
 			ReceivePack: true,
 		},
 	}
 
-	services := map[string]Service{
+	githttp.services = map[string]Service{
 		"(.*?)/git-upload-pack$":                       Service{"POST", githttp.serviceRpc, "upload-pack"},
 		"(.*?)/git-receive-pack$":                      Service{"POST", githttp.serviceRpc, "receive-pack"},
 		"(.*?)/info/refs$":                             Service{"GET", githttp.getInfoRefs, ""},
@@ -428,6 +424,5 @@ func New(address string, projectBaseDir string) *GitHttp {
 		"(.*?)/objects/pack/pack-[0-9a-f]{40}\\.pack$": Service{"GET", githttp.getPackFile, ""},
 		"(.*?)/objects/pack/pack-[0-9a-f]{40}\\.idx$":  Service{"GET", githttp.getIdxFile, ""},
 	}
-	githttp.services = services
 	return githttp
 }

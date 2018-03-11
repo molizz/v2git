@@ -17,33 +17,33 @@ var config *cfg.Config
 
 func init() {
 	var err error
-	config, err = cfg.New("config.yml")
+	config, err = cfg.New("config.json")
 	if err != nil {
-		fmt.Println("Failed to load config.yml. ", err.Error())
+		fmt.Println("Failed to load config.json. ", err.Error())
 		os.Exit(1)
 	}
 }
 
-func verify(request_path, username, password string) bool {
-	authRequest := &cfg.AuthRequest{
-		AuthURL:  config.AuthUrl,
-		Path:     request_path,
-		Username: username,
-		Password: password,
-	}
-	b, err := auth.Verify(authRequest)
+func verify(request *cfg.AuthRequest) bool {
+	b, err := auth.Verify(request)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("Verify error ", err)
 		return false
 	}
 	return b
 }
 
 func main() {
-	addr := fmt.Sprintf(":%d", config.Port)
-	g := git.New(addr, config.RepoDir)
-	g.RegisterVerify(verify)
-	g.Start()
+	httpAddr := fmt.Sprintf(":%d", config.HttpPort)
+	sshAddr := fmt.Sprintf(":%d", config.SshPort)
+
+	ssh := git.NewSSH(sshAddr, config)
+	ssh.RegisterVerify(verify)
+	go ssh.Start()
+
+	http := git.NewHTTP(httpAddr, config)
+	http.RegisterVerify(verify)
+	http.Start()
 
 	//select {}
 }

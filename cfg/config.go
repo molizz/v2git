@@ -5,9 +5,13 @@ import (
 )
 
 type Config struct {
-	Port    uint   `json:"port"`
-	RepoDir string `json:"repo_dir"`
-	AuthUrl string `json:"auth_url"`
+	HttpPort       uint   `json:"http_port"`
+	SshPort        uint   `json:"ssh_port"`
+	RepoDir        string `json:"repo_dir"`
+	PrivateKeyPath string `json:"private_key_path"`
+	AuthUrl        string `json:"auth_url"`
+	GitBinPath     string `json:"git_bin_path"`
+	GitUser        string `json:"git_user"`
 }
 
 func New(configPath string) (*Config, error) {
@@ -17,10 +21,11 @@ func New(configPath string) (*Config, error) {
 }
 
 type AuthRequest struct {
-	AuthURL  string `json:"auth_url"`
-	Path     string `json:"path"`
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Path        string `json:"path"`        // xxx/xxx.git
+	AuthURL     string `json:"auth_url"`    // 授权url
+	Fingerprint string `json:"fingerprint"` // ssh验证的公有key指纹
+	Username    string `json:"username"`    // http验证的账号
+	Password    string `json:"password"`    // http验证的密码
 }
 
 type AuthResponse struct {

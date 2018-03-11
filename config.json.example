@@ -1,0 +1,9 @@
+{
+  "http_port": 2000,
+  "ssh_port": 2222,
+  "git_bin_path": "/usr/bin/git",
+  "git_user": "git",
+  "repo_dir": "/Users/repos",
+  "auth_url": "http://127.0.0.1/api/auth",
+  "private_key_path": "/home/git/.ssh/id_rsa"
+}
