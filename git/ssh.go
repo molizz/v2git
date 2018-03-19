@@ -8,7 +8,6 @@ import (
 
 	"github.com/gliderlabs/ssh"
 	"github.com/molisoft/v2git/cfg"
-	"github.com/molisoft/v2git/utils"
 	gossh "golang.org/x/crypto/ssh"
 )
 
