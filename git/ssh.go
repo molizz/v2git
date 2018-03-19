@@ -12,6 +12,7 @@ import (
 )
 
 type GitSSH struct {
+	GitBase
 	config          *Config
 	verify          Verification      // 验证回调
 	allowedCommends map[string]string // 允许的命令
@@ -52,13 +53,11 @@ func (this *GitSSH) Handler(session ssh.Session) {
 	}
 
 	// URL.path转换成路径
-	logicPath, err := UrlToNamespace(commands[1])
+	dir, err := this.FullPath(commands[1])
 	if err != nil {
-		log.Println("Path to namespace error ", err)
+		log.Println("Full path error ", err)
 		return
 	}
-	// 连接成绝对物理路径
-	dir := this.repoFullPath(logicPath)
 
 	// 开始执行git命令
 	args := []string{service, dir}
@@ -93,12 +92,6 @@ func (this *GitSSH) Handler(session ssh.Session) {
 	}()
 	cmd.Wait()
 	log.Println("Session id: " + session.RemoteAddr().String() + " -> signout ")
-}
-
-func (this *GitSSH) repoFullPath(requestPath string) string {
-	gitDir := this.config.RepoRoot + "/" + requestPath
-	log.Println("Git full path to the repo: ", gitDir)
-	return gitDir
 }
 
 func (this *GitSSH) Start() {
@@ -145,6 +138,9 @@ func NewSSH(addr string, cfg *cfg.Config) *GitSSH {
 			ListenAddr:     addr,
 			UploadPack:     true,
 			ReceivePack:    true,
+		},
+		GitBase: GitBase{
+			RootPath: cfg.RepoDir,
 		},
 		allowedUser: cfg.GitUser,
 		allowedCommends: map[string]string{

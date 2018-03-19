@@ -49,6 +49,7 @@ type HandlerReq struct {
 }
 
 type GitHttp struct {
+	GitBase
 	config   *Config
 	services map[string]Service
 	verify   Verification
@@ -77,9 +78,9 @@ func (this *GitHttp) requestHandler(w http.ResponseWriter, r *http.Request) {
 
 			rpc := service.Rpc
 			file := strings.Replace(r.URL.Path, m[1]+"/", "", 1)
-			dir, err := this.getGitDir(m[1])
+			dir, err := this.FullPath(m[1])
 			if err != nil {
-				log.Print(err)
+				log.Println("Full path error ", err)
 				this.renderNotFound(w)
 				return
 			}
@@ -241,29 +242,6 @@ func (this *GitHttp) sendFile(content_type string, hr HandlerReq) {
 	http.ServeFile(w, r, req_file)
 }
 
-func (this *GitHttp) getGitDir(uriPath string) (string, error) {
-	root := this.config.RepoRoot
-
-	if root == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			log.Print(err)
-			return "", err
-		}
-		root = cwd
-	}
-	dir, err := UrlToNamespace(uriPath)
-	if err != nil {
-		return "", err
-	}
-
-	f := path.Join(root, dir)
-	if _, err := os.Stat(f); os.IsNotExist(err) {
-		return "", err
-	}
-	return f, nil
-}
-
 func (this *GitHttp) getServiceType(r *http.Request) string {
 	service_type := r.FormValue("service")
 
@@ -408,6 +386,9 @@ func NewHTTP(address string, cfg *cfg.Config) *GitHttp {
 			AuthUrl:     cfg.AuthUrl,
 			UploadPack:  true,
 			ReceivePack: true,
+		},
+		GitBase: GitBase{
+			RootPath: cfg.RepoDir,
 		},
 	}
 
