@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/molisoft/v2git/api"
 	"github.com/molisoft/v2git/auth"
 	"github.com/molisoft/v2git/cfg"
 	"github.com/molisoft/v2git/git"
+	"github.com/molisoft/v2git/repo"
 )
 
 var config *cfg.Config
@@ -22,6 +24,12 @@ func init() {
 		fmt.Println("Failed to load config.json. ", err.Error())
 		os.Exit(1)
 	}
+
+	repo.RootDir = config.RepoDir
+}
+
+func apiServer() {
+	go api.Start(":3344", config.ApiPassword)
 }
 
 func verify(request *cfg.AuthRequest) bool {
@@ -36,6 +44,8 @@ func verify(request *cfg.AuthRequest) bool {
 func main() {
 	httpAddr := fmt.Sprintf(":%d", config.HttpPort)
 	sshAddr := fmt.Sprintf(":%d", config.SshPort)
+
+	apiServer()
 
 	ssh := git.NewSSH(sshAddr, config)
 	ssh.RegisterVerify(verify)

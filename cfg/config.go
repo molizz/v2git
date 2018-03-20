@@ -12,6 +12,7 @@ type Config struct {
 	AuthUrl        string `json:"auth_url"`
 	GitBinPath     string `json:"git_bin_path"`
 	GitUser        string `json:"git_user"`
+	ApiPassword    string `json:"api_password"`
 }
 
 func New(configPath string) (*Config, error) {

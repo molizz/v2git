@@ -3,6 +3,8 @@ package git
 import (
 	"os"
 	"path"
+
+	"github.com/molisoft/v2git/utils"
 )
 
 type GitBase struct {
@@ -14,7 +16,7 @@ type GitBase struct {
 //
 func (this *GitBase) FullPath(requestPath string) (string, error) {
 
-	dir, err := UrlToDirPath(requestPath)
+	dir, err := utils.UrlToDirPath(requestPath)
 	if err != nil {
 		return "", err
 	}
