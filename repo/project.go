@@ -50,6 +50,13 @@ func (this *Repository) CreateProject() error {
 	return nil
 }
 
+func (this *Repository) DeleteProject() error {
+	if this.repo != nil {
+		this.repo.Free()
+	}
+	return os.RemoveAll(this.RepoPath)
+}
+
 func (this *Repository) IsExists() bool {
 	_, err := os.Stat(this.RepoPath)
 	return !os.IsNotExist(err)
