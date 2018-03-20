@@ -7,5 +7,5 @@ func Fail(ctx *gin.Context, statusCode int, message string) {
 }
 
 func Success(ctx *gin.Context, statusCode int) {
-	ctx.JSON(statusCode, nil)
+	ctx.Status(statusCode)
 }
