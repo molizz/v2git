@@ -76,5 +76,5 @@ func (this *Repository) openRepository() (err error) {
 }
 
 func (this *Repository) Storage() (*filesystem.Storage, error) {
-	filesystem.NewStorage(osfs.New(this.RepoPath))
+	return filesystem.NewStorage(osfs.New(this.RepoPath))
 }
