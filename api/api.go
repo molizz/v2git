@@ -17,7 +17,7 @@ func Start(addr string, pwd string) {
 	projects := engine.Group("/projects")
 	{
 		projects.POST("/", createProject)
-		projects.DELETE("/:namespace/:name", deleteProject)
+		projects.DELETE("/:namespace/:name/", deleteProject)
 	}
 
 	engine.Run(addr) // 最好还是用https
