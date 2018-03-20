@@ -6,7 +6,9 @@ import (
 	"path"
 
 	"github.com/molisoft/v2git/utils"
-	"gopkg.in/libgit2/git2go.v25"
+	"gopkg.in/src-d/go-billy.v4/osfs"
+	"gopkg.in/src-d/go-git.v4"
+	"gopkg.in/src-d/go-git.v4/storage/filesystem"
 )
 
 var RootDir string // 仓库存储根目录
@@ -16,8 +18,9 @@ var (
 )
 
 type Repository struct {
-	RepoPath string // 仓库目录
-	repo     *git.Repository
+	RepoPath     string // 仓库目录
+	repo         *git.Repository
+	repo_storage *filesystem.Storage
 }
 
 func New(namespace string) (*Repository, error) {
@@ -43,7 +46,9 @@ func (this *Repository) CreateProject() error {
 	}
 
 	var err error
-	this.repo, err = git.InitRepository(this.RepoPath, true)
+	fs, err := this.Storage()
+	this.repo, err = git.Init(fs, nil)
+
 	if err != nil {
 		return err
 	}
@@ -52,7 +57,7 @@ func (this *Repository) CreateProject() error {
 
 func (this *Repository) DeleteProject() error {
 	if this.repo != nil {
-		this.repo.Free()
+		//this.repo.Storer
 	}
 	return os.RemoveAll(this.RepoPath)
 }
@@ -64,7 +69,12 @@ func (this *Repository) IsExists() bool {
 
 func (this *Repository) openRepository() (err error) {
 	if this.IsExists() {
-		this.repo, err = git.OpenRepository(this.RepoPath)
+		this.repo_storage, err = this.Storage()
+		this.repo, err = git.Open(this.repo_storage, nil)
 	}
-	return
+	return err
+}
+
+func (this *Repository) Storage() (*filesystem.Storage, error) {
+	filesystem.NewStorage(osfs.New(this.RepoPath))
 }
